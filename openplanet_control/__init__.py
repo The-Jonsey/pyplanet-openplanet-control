@@ -30,7 +30,7 @@ Settings (//settings):
     Set empty to disable the announcement.
 
 Admin commands:
-  * //openplanet: lists what every online player reported (cached, does not
+  * //openplanet: lists what every online player reported (cached, dos not
     re-run the check).
   * //opcheck: clears cached reports and re-runs the check (detection and
     enforcement) on all online players, e.g. mid-round.
@@ -324,7 +324,7 @@ class OpenplanetControl(AppConfig):
 		attempts = 0
 		data = None
 		while not success and attempts < 3:
-			r = requests.get("https://api.openplanet.dev/config")
+			r = requests.get("https://api.openplanet.dev/config", headers={'User-Agent': 'PyPlanet: OpenPlanet Control Plugin'})
 			if r.status_code == 200:
 				success = True
 				data = r.json()
