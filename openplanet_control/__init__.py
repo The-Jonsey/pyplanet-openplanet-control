@@ -61,7 +61,14 @@ REPORT_ACTION = 'op_report'
 PROBE_BODY = """
 <script><![CDATA[
 main() {
-	TriggerPageAction("__ML_ID____" ^ "__ACTION__|" ^ System.ExtraTool_Info);
+	declare Text OpenPlanetSignatureMode = "";
+	while (True) {
+		yield;
+		if (OpenPlanetSignatureMode != System.ExtraTool_Info) {
+			TriggerPageAction("__ML_ID____" ^ "__ACTION__|" ^ System.ExtraTool_Info);
+			OpenPlanetSignatureMode = System.ExtraTool_Info;
+		}
+	}
 }
 ]]></script>
 """
