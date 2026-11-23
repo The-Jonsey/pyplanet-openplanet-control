@@ -38,6 +38,8 @@ Admin commands:
 import logging
 import re
 import asyncio
+import time
+import requests
 
 from pyplanet.apps.config import AppConfig
 from pyplanet.apps.core.maniaplanet import callbacks as mp_signals
@@ -55,6 +57,11 @@ OPENPLANET_RE = re.compile(r'^Openplanet (\S+)')
 SIG_MODE_RE = re.compile(r' \[([A-Z_]+)\]$')
 
 REPORT_ACTION = 'op_report'
+
+BUILTIN_OP_PROFILES = {
+	"OFFICIAL": "Official",
+	"REGULAR": "Regular"
+}
 
 # Single-shot ManiaScript probe: reports System.ExtraTool_Info once on load.
 # Placeholders replaced with .replace() because ManiaScript uses braces.
@@ -98,6 +105,11 @@ class OpenplanetProbeView(View):
 class OpenplanetControl(AppConfig):
 	game_dependencies = ['trackmania_next', 'trackmania']
 	app_dependencies = ['core.maniaplanet']
+
+	openplanet_comp_profiles = {
+		**BUILTIN_OP_PROFILES
+	}
+	openplanet_profiles_last_retrieval = time.time()
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
@@ -170,6 +182,8 @@ class OpenplanetControl(AppConfig):
 		self.context.signals.listen(mp_signals.player.player_enter_spectator_slot, self.on_enter_spectator)
 		self.context.signals.listen(mp_signals.player.player_disconnect, self.on_disconnect)
 
+		await self.get_openplanet_profiles()
+
 		# Also probe players already online when the app (re)starts.
 		for player in self.instance.player_manager.online:
 			await self.probe.display(player_logins=[player.login])
@@ -236,16 +250,18 @@ class OpenplanetControl(AppConfig):
 		if player.login in self.kicking:
 			return
 		self.kicking.add(player.login)
+		
+		if (self.openplanet_profiles_last_retrieval < time.time() - 3600):
+			await self.get_openplanet_profiles()
 
-		allowed_text = ', '.join(allowed) if allowed else '(none)'
+		allowed_text = ', '.join("'$FF0" + self.get_openplanet_profile_friendly_name(profile) + "$g'" for profile in allowed or []) if allowed else '(none)'
 		logger.info(
 			'Kicking %s: Openplanet mode %s not allowed (version %s).',
-			player.login, report['mode'], report['version'],
+			player.login, self.get_openplanet_profile_friendly_name(report['mode']), report['version'],
 		)
-		kick_message = (
-			'Openplanet signature mode $FF0{}$g is not allowed on this server. '
-			'Allowed: $FF0{}$g. Switch via the Openplanet menu (F3) and rejoin.'
-		).format(report['mode'], allowed_text)
+		kick_message = ('Openplanet signature mode $FF0{}$g is not allowed on this server. '
+			'Allowed: {}. Switch via the Openplanet menu (F3) and rejoin.'
+		).format(self.get_openplanet_profile_friendly_name(report['mode']), allowed_text)
 		try:
 			try:
 				await self.instance.chat(kick_message, player.login)
@@ -302,3 +318,31 @@ class OpenplanetControl(AppConfig):
 				status = '$ff0Openplanet {} $fff[{}]'.format(report['version'], report['mode'])
 			lines.append('$fff{} $z$s— {}'.format(online.nickname, status))
 		await self.instance.chat('\n'.join(lines), player)
+
+	async def get_openplanet_profiles(self):
+		success = False
+		attempts = 0
+		data = None
+		while not success and attempts < 3:
+			r = requests.get("https://api.openplanet.dev/config")
+			if r.status_code == 200:
+				success = True
+				data = r.json()
+			else:
+				attempts += 1
+		if not success:
+			return
+		profiles = {
+			**BUILTIN_OP_PROFILES
+		}
+		if "next" not in data or "cp" not in data["next"]:
+			return
+		for comp_profile in data["next"]["cp"]:
+			profiles[comp_profile["id"]] = comp_profile["name"]
+		self.openplanet_comp_profiles = profiles
+		self.openplanet_profiles_last_retrieval = time.time()
+
+	def get_openplanet_profile_friendly_name(self, profile):
+		if profile in self.openplanet_comp_profiles:
+			return self.openplanet_comp_profiles[profile]
+		return profile
