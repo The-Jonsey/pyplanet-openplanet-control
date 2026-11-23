@@ -30,7 +30,7 @@ Settings (//settings):
     Set empty to disable the announcement.
 
 Admin commands:
-  * //openplanet: lists what every online player reported (cached, dos not
+  * //openplanet: lists what every online player reported (cached, does not
     re-run the check).
   * //opcheck: clears cached reports and re-runs the check (detection and
     enforcement) on all online players, e.g. mid-round.
@@ -60,7 +60,8 @@ REPORT_ACTION = 'op_report'
 
 BUILTIN_OP_PROFILES = {
 	"OFFICIAL": "Official",
-	"REGULAR": "Regular"
+	"REGULAR": "Regular",
+	"DEVMODE": "Developer Mode"
 }
 
 # Single-shot ManiaScript probe: reports System.ExtraTool_Info once on load.
