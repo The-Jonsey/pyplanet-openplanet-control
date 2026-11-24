@@ -38,8 +38,8 @@ Admin commands:
 import logging
 import re
 import asyncio
+import aiohttp
 import time
-import requests
 
 from pyplanet.apps.config import AppConfig
 from pyplanet.apps.core.maniaplanet import callbacks as mp_signals
@@ -64,7 +64,7 @@ BUILTIN_OP_PROFILES = {
 	"DEVMODE": "Developer Mode"
 }
 
-# Single-shot ManiaScript probe: reports System.ExtraTool_Info once on load.
+# ManiaScript probe: reports initial System.ExtraTool_Info (Openplanet Profile) on load, and sends updated System.ExtraTool_Info if it changes
 # Placeholders replaced with .replace() because ManiaScript uses braces.
 PROBE_BODY = """
 <script><![CDATA[
@@ -110,7 +110,7 @@ class OpenplanetControl(AppConfig):
 	openplanet_comp_profiles = {
 		**BUILTIN_OP_PROFILES
 	}
-	openplanet_profiles_last_retrieval = time.time()
+	openplanet_profiles_last_retrieval = 0
 
 	def __init__(self, *args, **kwargs):
 		super().__init__(*args, **kwargs)
@@ -183,6 +183,7 @@ class OpenplanetControl(AppConfig):
 		self.context.signals.listen(mp_signals.player.player_enter_spectator_slot, self.on_enter_spectator)
 		self.context.signals.listen(mp_signals.player.player_disconnect, self.on_disconnect)
 
+		self.openplanet_profiles_last_retrieval = time.time()
 		await self.get_openplanet_profiles()
 
 		# Also probe players already online when the app (re)starts.
@@ -320,28 +321,36 @@ class OpenplanetControl(AppConfig):
 			lines.append('$fff{} $z$s— {}'.format(online.nickname, status))
 		await self.instance.chat('\n'.join(lines), player)
 
-	async def get_openplanet_profiles(self):
-		success = False
-		attempts = 0
-		data = None
-		while not success and attempts < 3:
-			r = requests.get("https://api.openplanet.dev/config", headers={'User-Agent': 'PyPlanet: OpenPlanet Control Plugin'})
-			if r.status_code == 200:
-				success = True
-				data = r.json()
-			else:
-				attempts += 1
-		if not success:
+	async def get_openplanet_profiles(self, attempts = 0):
+		if attempts >= 3:
+			await self.handle_openplanet_api_error()
 			return
-		profiles = {
-			**BUILTIN_OP_PROFILES
-		}
-		if "next" not in data or "cp" not in data["next"]:
-			return
-		for comp_profile in data["next"]["cp"]:
-			profiles[comp_profile["id"]] = comp_profile["name"]
-		self.openplanet_comp_profiles = profiles
-		self.openplanet_profiles_last_retrieval = time.time()
+		timeout = aiohttp.ClientTimeout(total=5)
+		async with aiohttp.ClientSession(timeout=timeout) as session:
+			try:
+				async with session.get("https://api.openplanet.dev/config", headers={'User-Agent': 'PyPlanet: OpenPlanet Control Plugin'}) as r:
+					if r.status != 200:
+						await self.get_openplanet_profiles(attempts + 1)
+						logger.warning("Error getting comp profiles from OpenPlanet API, API returned code: {}".format(r.status))
+					else:
+						data = await r.json()
+						profiles = {
+							**BUILTIN_OP_PROFILES
+						}
+						if "next" not in data or "cp" not in data["next"]:
+							return
+						for comp_profile in data["next"]["cp"]:
+							profiles[comp_profile["id"]] = comp_profile["name"]
+						self.openplanet_comp_profiles = profiles
+						self.openplanet_profiles_last_retrieval = time.time()
+			except Exception as e:
+				logger.warning("Error getting comp profiles from OpenPlanet API: {}".format(getattr(e, 'message', str(e))))
+				await self.get_openplanet_profiles(attempts + 1)
+
+	async def handle_openplanet_api_error(self):
+		for player in self.instance.player_manager.online:
+			if player.level >= Player.LEVEL_ADMIN:
+				await self.instance.chat("Error getting comp profiles from OP api, showing raw profile ID's instead of names", player)
 
 	def get_openplanet_profile_friendly_name(self, profile):
 		if profile in self.openplanet_comp_profiles:
